@@ -1,0 +1,34 @@
+<odoo>
+    <record id="view_labor_report_wizard_form" model="ir.ui.view">
+        <field name="name">hr.employee.attendance.wizard.form</field>
+        <field name="model">hr.attendance.custom_report</field>
+        <field name="arch" type="xml">
+            <form string="Generar Libro Laboral">
+                <group>
+                    <field name="year"/>
+                    <field name="month"/>
+                </group>
+                <footer>
+                    <button name="generate_attendance_report_excel" string="Generar" type="object"
+                            class="btn-primary"/>
+                    <button string="Cancelar" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <!-- Acción para abrir el wizard -->
+    <record id="action_report_attendance" model="ir.actions.act_window">
+        <field name="name">Reporte de asistencias</field>
+        <field name="res_model">hr.attendance.custom_report</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
+    <!-- Opcional: Menú o botón en algún lugar del menú principal -->
+    <!-- Por ejemplo, en el menú de Recursos Humanos -->
+    <menuitem id="menu_labor_report_wizard"
+              name="Reporte de asistencia"
+              parent="hr_payroll.menu_hr_payroll_report"
+              action="action_report_attendance"/>
+</odoo>
