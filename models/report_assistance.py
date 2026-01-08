@@ -129,6 +129,8 @@ class InfoWizard(models.TransientModel):
             # Agrupar asistencias por fecha (solo fecha, sin hora)
             attendance_by_date = {}
             for att in attendances:
+                if not att.check_out:  # Saltear asistencias incompletas
+                    continue
                 att_date = att.check_in.date()
                 if start_date <= att_date <= end_date:
                     if att_date not in attendance_by_date:
