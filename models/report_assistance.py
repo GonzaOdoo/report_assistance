@@ -210,11 +210,9 @@ class InfoWizard(models.TransientModel):
                         total_worked_seconds += worked
             
                 # Limitar a 9 horas (32400 segundos)
-                _logger.info(total_worked_seconds)
                 total_worked_seconds = min(total_worked_seconds, 9 * 3600)
                 horas_del_dia = total_worked_seconds / 3600
                 horas_trabajadas += round(horas_del_dia * 2) / 2  # redondear a 0.5
-                _logger.info(horas_trabajadas)
             # --- 2. Obtener todos los permisos validados del mes ---
             leaves = self.env['hr.leave'].search([
                 ('employee_id', '=', emp.id),
