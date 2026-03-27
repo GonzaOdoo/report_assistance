@@ -220,7 +220,7 @@ class InfoWizard(models.TransientModel):
                 ('date_to', '>=', fields.Datetime.to_datetime(start_date)),  # termina después del inicio del mes
                 ('date_from', '<=', fields.Datetime.to_datetime(end_date + timedelta(days=1))),  # empieza antes del día siguiente al fin del mes
             ])
-                        
+            _logger.info(leaves)
             covered_dates = set()
             
             for leave in leaves:
@@ -252,12 +252,16 @@ class InfoWizard(models.TransientModel):
                         end_local = start_local + timedelta(days=1)
                     
                         intervals = calendar._work_intervals_batch(start_local, end_local, resources=emp.resource_id)
-                        is_work_day = bool(intervals.get(emp.resource_id.id))
+                        _logger.info(intervals)
+                        intervals_for_emp = intervals.get(emp.resource_id.id)
+                        _logger.info(type(intervals_for_emp))
+                        _logger.info(len(intervals_for_emp))
+                        #is_work_day = bool(intervals_for_emp and len(intervals_for_emp) > 0)
+                    _logger.info(is_work_day)
                     if is_work_day:
                         covered_dates.add(current)
                         leave_name = (leave.holiday_status_id.name or '').lower()
-                        if emp.name == 'Brusa María Mabel':
-                            _logger.info(leave_name)
+                        _logger.info(leave_name)
                         if 'enfermedad' in leave_name:
                             lic_enf += 9.0
                         elif 'vacaci' in leave_name:
