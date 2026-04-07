@@ -339,5 +339,3 @@ class InfoWizard(models.TransientModel):
             'url': f'/web/content/{attachment.id}?download=true',
             'target': 'self',
         }
-
-
