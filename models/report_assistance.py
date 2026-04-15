@@ -45,15 +45,22 @@ class InfoWizard(models.TransientModel):
         company_calendar = self.env.company.resource_calendar_id
         feriados = set()
         if company_calendar:
+            start_dt = fields.Datetime.to_datetime(start_date)
+            end_dt = fields.Datetime.to_datetime(end_date) + timedelta(days=1)
+            
             leaves_feriados = self.env['resource.calendar.leaves'].search([
-                ('calendar_id', '=', company_calendar.id),
-                ('resource_id', '=', False),  # feriados globales
-                ('date_to', '>=', fields.Datetime.to_datetime(start_date)),
-                ('date_from', '<=', fields.Datetime.to_datetime(end_date + timedelta(days=1))),
+                ('resource_id', '=', False),   # solo feriados globales
             ])
+            _logger.info(leaves_feriados)
+            for l in leaves_feriados:
+                _logger.info(f"FERIADO: {l.name} {l.date_from} {l.date_to}")
             for leaf in leaves_feriados:
-                from_date = max(leaf.date_from.date(), start_date)
-                to_date = min(leaf.date_to.date(), end_date)
+                tz = pytz.timezone(self.env.user.tz or 'America/Argentina/Buenos_Aires')
+                
+                date_from = fields.Datetime.context_timestamp(self, leaf.date_from).date()
+                date_to = fields.Datetime.context_timestamp(self, leaf.date_to).date()
+                from_date = max(date_from, start_date)
+                to_date = min(date_to, end_date)
                 current = from_date
                 while current <= to_date:
                     feriados.add(current)
@@ -118,7 +125,7 @@ class InfoWizard(models.TransientModel):
             art = 0.0
             vacac = 0.0
             sin_just = 0.0
-            
+            _logger.info(f"Procesando: {emp.name}")
             # --- 1. Obtener todas las asistencias del mes (optimizado) ---
             attendances = self.env['hr.attendance'].search([
                 ('employee_id', '=', emp.id),
@@ -188,9 +195,6 @@ class InfoWizard(models.TransientModel):
                             # Convertir asistencias a la misma zona horaria
                             check_in_tz = check_in_real.astimezone(local_tz)
                             check_out_tz = check_out_real.astimezone(local_tz)
-                            _logger.info(f"Empleado:{emp.name}")
-                            _logger.info(check_in_tz)
-                            _logger.info(check_out_tz)
                             # Ajustar entrada: no antes del horario
                             # Ajustar entrada: no antes del horario contractual
                             actual_start = max(check_in_tz, scheduled_start)
@@ -232,7 +236,16 @@ class InfoWizard(models.TransientModel):
             
                 # Iterar día por día
                 current = from_date
+                _logger.info(f"Feriado: {feriados}")
                 while current <= to_date:
+                    _logger.info(current)
+                    if current.weekday() >= 5:  # sábado o domingo
+                        current += timedelta(days=1)
+                        continue
+                    if current in feriados:
+                        _logger.info("Feriado!!!")
+                        current += timedelta(days=1)
+                        continue
                     # Saltar si ya fue cubierto (evitar superposiciones)
                     if current in covered_dates or current in attendance_dates:
                         current += timedelta(days=1)
@@ -241,29 +254,14 @@ class InfoWizard(models.TransientModel):
                     # Verificar si es día laborable (igual que number_of_days)
                     calendar = emp.resource_calendar_id or self.env.company.resource_calendar_id
                     is_work_day = True
-                    if calendar and emp.resource_id:
-                        # Convertir la fecha a datetime con zona horaria
-                        tz = self.env.user.tz or self.env.company.partner_id.tz or 'America/Asuncion'
-                        from pytz import timezone
-                        local_tz = timezone(tz)
-                    
-                        start_naive = datetime.combine(current, datetime.min.time())
-                        start_local = local_tz.localize(start_naive, is_dst=None)
-                        end_local = start_local + timedelta(days=1)
-                    
-                        intervals = calendar._work_intervals_batch(start_local, end_local, resources=emp.resource_id)
-                        _logger.info(intervals)
-                        intervals_for_emp = intervals.get(emp.resource_id.id)
-                        _logger.info(type(intervals_for_emp))
-                        _logger.info(len(intervals_for_emp))
-                        #is_work_day = bool(intervals_for_emp and len(intervals_for_emp) > 0)
-                    _logger.info(is_work_day)
+                    is_work_day = current.weekday() < 5
                     if is_work_day:
                         covered_dates.add(current)
                         leave_name = (leave.holiday_status_id.name or '').lower()
                         _logger.info(leave_name)
                         if 'enfermedad' in leave_name:
                             lic_enf += 9.0
+                            sin_just_fechas.add(current)
                         elif 'vacaci' in leave_name:
                             vacac += 9.0
                         elif 'sin just' in leave_name or 'no just' in leave_name or 'ausencia por' in leave_name or 'ausencia por' in leave_name:
