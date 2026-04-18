@@ -222,7 +222,7 @@ class InfoWizard(models.TransientModel):
                 while current <= to_date:
                     # 🔥 CASO ESPECIAL: HORAS RECUPERADAS
                     leave_name = (leave.holiday_status_id.name or '').lower()
-                    if 'recuperadas' or 'recuperar' in leave_name:
+                    if 'recuperadas' in leave_name or 'recuperar' in leave_name:
                         # usar horas reales del permiso
                         if leave.request_unit_hours:
                             horas_rec += leave.number_of_hours or 0.0
@@ -507,7 +507,7 @@ class InfoWizard(models.TransientModel):
                 while current <= to_date:
                     _logger.info(current)
                     leave_name = (leave.holiday_status_id.name or '').lower()
-                    if 'recuperadas' or 'recuperar' in leave_name:
+                    if 'recuperadas' in leave_name or 'recuperar' in leave_name:
                         # usar horas reales del permiso
                         if leave.request_unit_hours:
                             horas_rec += leave.number_of_hours or 0.0
