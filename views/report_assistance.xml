@@ -3,16 +3,43 @@
         <field name="name">hr.employee.attendance.wizard.form</field>
         <field name="model">hr.attendance.custom_report</field>
         <field name="arch" type="xml">
-            <form string="Generar Libro Laboral">
-                <group>
-                    <field name="year"/>
-                    <field name="month"/>
-                </group>
-                <footer>
-                    <button name="generate_attendance_report_excel" string="Generar" type="object"
-                            class="btn-primary"/>
-                    <button string="Cancelar" class="btn-secondary" special="cancel"/>
-                </footer>
+            <form string="Reporte de Asistencias">
+                <div class="alert alert-warning" role="alert"
+                     invisible="not needs_refresh">
+                    ⚠️ Se cambió el período visualizado. Debés presionar <b>Generar</b> nuevamente para actualizar los datos.
+                </div>
+                <header>
+                    <button name="action_generate_lines" string="Generar" type="object" class="btn-primary"/>
+                    <button name="generate_attendance_report_excel" string="Exportar Excel" type="object"/>
+                </header>
+                
+                <sheet>
+                    <group>
+                    <group>
+                        <field name="year"/>
+                        <field name="month"/>
+                    </group>
+                    <group>
+                        <field name="feriados_texto" readonly="1"/>
+                        <field name="needs_refresh" invisible="1"></field>
+                    </group>
+                    </group>
+                    <field name="line_ids" readonly="1">
+                        <tree limit="250">
+                            <field name="sector"/>
+                            <field name="employee_id"/>
+                            <field name="horas_trabajadas"/>
+                            <field name="lic_enf"/>
+                            <field name="otras_lic"/>
+                            <field name="vacac"/>
+                            <field name="sin_just"/>
+                            <field name="horas_rec"/>
+                            <field name="present_quincena"/>
+                            <field name="art"/>
+                            <field name="total"/>
+                        </tree>
+                    </field>
+                </sheet>
             </form>
         </field>
     </record>
@@ -22,7 +49,7 @@
         <field name="name">Reporte de asistencias</field>
         <field name="res_model">hr.attendance.custom_report</field>
         <field name="view_mode">form</field>
-        <field name="target">new</field>
+        <field name="target">current</field>
     </record>
 
     <!-- Opcional: Menú o botón en algún lugar del menú principal -->

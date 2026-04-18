@@ -16,6 +16,7 @@ class InfoWizard(models.TransientModel):
     _name = 'hr.attendance.custom_report'
     _description = 'Reporte personalizado de asistencias'
 
+    name = fields.Char(string="Nombre", compute="_compute_name", store=False)
     year = fields.Integer(string="Año", required=True, default=lambda self: fields.Date.today().year)
     company_id = fields.Many2one('res.company', string="Compañía", default=lambda self: self.env.company)
     month = fields.Selection([
@@ -32,7 +33,267 @@ class InfoWizard(models.TransientModel):
         ('11', 'Noviembre'),
         ('12', 'Diciembre'),
     ], string="Mes", required=True, default=lambda self: str(fields.Date.today().month))
+    line_ids = fields.One2many(
+        'hr.attendance.custom_report.line',
+        'report_id',
+        string="Líneas"
+    )
+    feriados_texto = fields.Text(string="Feriados del mes", readonly=True)
+    needs_refresh = fields.Boolean(string="Requiere regenerar", default=False)
 
+    last_generated_year = fields.Integer()
+    last_generated_month = fields.Selection([
+        ('1', 'Enero'),
+        ('2', 'Febrero'),
+        ('3', 'Marzo'),
+        ('4', 'Abril'),
+        ('5', 'Mayo'),
+        ('6', 'Junio'),
+        ('7', 'Julio'),
+        ('8', 'Agosto'),
+        ('9', 'Septiembre'),
+        ('10', 'Octubre'),
+        ('11', 'Noviembre'),
+        ('12', 'Diciembre'),
+    ])
+
+    @api.onchange('year', 'month')
+    def _onchange_period(self):
+        for rec in self:
+            if not rec.line_ids:
+                rec.needs_refresh = False
+            if rec.line_ids and (
+                rec.year != rec.last_generated_year or
+                rec.month != rec.last_generated_month
+            ):
+                rec.needs_refresh = True
+            else:
+                rec.needs_refresh = False
+
+    @api.depends('year','month')
+    def _compute_name(self):
+        month_names = dict(self._fields['month'].selection)
+        for rec in self:
+            month_name = month_names.get(rec.month, '')
+            if rec.year and month_name:
+                rec.name = f"Reporte de asistencias - {month_name} {rec.year}"
+            else:
+                rec.name = "Reporte de asistencias"
+
+    def action_generate_lines(self):
+        self.ensure_one()
+    
+        # Limpiar líneas anteriores
+        self.line_ids.unlink()
+    
+        company = self.company_id
+        year = self.year
+        month = int(self.month)
+        num_days = monthrange(year, month)[1]
+        start_date = date(year, month, 1)
+        end_date = date(year, month, num_days)
+    
+        company_calendar = self.env.company.resource_calendar_id
+        feriados = set()
+    
+        # --- FERIADOS ---
+        if company_calendar:
+            leaves_feriados = self.env['resource.calendar.leaves'].search([
+                ('resource_id', '=', False),
+            ])
+    
+            for leaf in leaves_feriados:
+                date_from = fields.Datetime.context_timestamp(self, leaf.date_from).date()
+                date_to = fields.Datetime.context_timestamp(self, leaf.date_to).date()
+    
+                from_date = max(date_from, start_date)
+                to_date = min(date_to, end_date)
+    
+                current = from_date
+                while current <= to_date:
+                    feriados.add(current)
+                    current += timedelta(days=1)
+        feriados_ordenados = sorted(feriados)
+        self.feriados_texto = ", ".join(d.strftime("%d/%m/%Y") for d in feriados_ordenados)
+        # --- EMPLEADOS ---
+        employees = self.env['hr.employee'].search([
+            ('company_id', '=', company.id),
+            ('active', '=', True)
+        ])
+    
+        if not employees:
+            raise UserError(f"No se encontraron empleados activos en la compañía {company.name}.")
+    
+        Line = self.env['hr.attendance.custom_report.line']
+    
+        # --- LOOP EMPLEADOS ---
+        for emp in employees:
+            sector = emp.department_id.name or "SIN DEPARTAMENTO"
+    
+            sin_just_fechas = set()
+            horas_trabajadas = 0.0
+            lic_enf = 0.0
+            otras_lic = 0.0
+            art = 0.0
+            vacac = 0.0
+            sin_just = 0.0
+            horas_rec = 0.0
+    
+            # --- ASISTENCIAS ---
+            attendances = self.env['hr.attendance'].search([
+                ('employee_id', '=', emp.id),
+                ('check_in', '>=', fields.Datetime.to_datetime(start_date)),
+                ('check_in', '<=', fields.Datetime.to_datetime(end_date + timedelta(days=1))),
+            ])
+    
+            attendance_by_date = {}
+            for att in attendances:
+                if not att.check_out:
+                    continue
+                att_date = att.check_in.date()
+                if start_date <= att_date <= end_date:
+                    attendance_by_date.setdefault(att_date, []).append(att)
+    
+            attendance_dates = set(attendance_by_date.keys())
+            calendar = emp.resource_calendar_id or self.env.company.resource_calendar_id
+    
+            for current_date, att_list in attendance_by_date.items():
+                att_list.sort(key=lambda x: x.check_in)
+    
+                merged = []
+                for att in att_list:
+                    if not merged:
+                        merged.append([att.check_in, att.check_out])
+                    else:
+                        last = merged[-1]
+                        if att.check_in <= last[1]:
+                            last[1] = max(last[1], att.check_out)
+                        else:
+                            merged.append([att.check_in, att.check_out])
+    
+                total_worked_seconds = 0
+    
+                for check_in_real, check_out_real in merged:
+                    if calendar and emp.resource_id:
+                        tz_name = self.env.user.tz or self.env.company.partner_id.tz or 'America/Asuncion'
+                        local_tz = pytz.timezone(tz_name)
+    
+                        start_dt = local_tz.localize(datetime.combine(current_date, datetime.min.time()))
+                        end_dt = start_dt + timedelta(days=1)
+    
+                        work_intervals = calendar._work_intervals_batch(start_dt, end_dt, resources=emp.resource_id)
+                        intervals_for_day = list(work_intervals.get(emp.resource_id.id, []))
+    
+                        if intervals_for_day:
+                            first_interval = intervals_for_day[0]
+                            scheduled_start = first_interval[0]
+                            scheduled_end = first_interval[1]
+    
+                            check_in_tz = check_in_real.astimezone(local_tz)
+                            check_out_tz = check_out_real.astimezone(local_tz)
+    
+                            actual_start = max(check_in_tz, scheduled_start)
+                            actual_end = check_out_tz
+    
+                            if actual_end > actual_start:
+                                total_worked_seconds += (actual_end - actual_start).total_seconds()
+                    else:
+                        total_worked_seconds += (check_out_real - check_in_real).total_seconds()
+    
+                total_worked_seconds = min(total_worked_seconds, 9 * 3600)
+                horas_del_dia = total_worked_seconds / 3600
+                horas_trabajadas += round(horas_del_dia * 2) / 2
+    
+            # --- LICENCIAS ---
+            leaves = self.env['hr.leave'].search([
+                ('employee_id', '=', emp.id),
+                ('state', '=', 'validate'),
+                ('date_to', '>=', fields.Datetime.to_datetime(start_date)),
+                ('date_from', '<=', fields.Datetime.to_datetime(end_date + timedelta(days=1))),
+            ])
+    
+            covered_dates = set()
+    
+            for leave in leaves:
+                from_date = max(leave.date_from.date(), start_date)
+                to_date = min(leave.date_to.date(), end_date)
+    
+                current = from_date
+                while current <= to_date:
+                    # 🔥 CASO ESPECIAL: HORAS RECUPERADAS
+                    leave_name = (leave.holiday_status_id.name or '').lower()
+                    if 'recuperadas' or 'recuperar' in leave_name:
+                        # usar horas reales del permiso
+                        if leave.request_unit_hours:
+                            horas_rec += leave.number_of_hours or 0.0
+                        else:
+                            # fallback si viene en días
+                            horas_rec += (leave.number_of_days or 0.0) * 9.0
+                        current += timedelta(days=1)
+                        continue
+                        
+                    if current.weekday() >= 5 or current in feriados:
+                        current += timedelta(days=1)
+                        continue
+    
+                    if current in covered_dates or current in attendance_dates:
+                        current += timedelta(days=1)
+                        continue
+    
+                    covered_dates.add(current)
+
+                    if 'enfermedad' in leave_name:
+                        lic_enf += 9.0
+                        sin_just_fechas.add(current)
+                    elif 'vacaci' in leave_name:
+                        vacac += 9.0
+                    elif 'sin just' in leave_name or 'no just' in leave_name or 'ausencia' in leave_name:
+                        sin_just += 9.0
+                        sin_just_fechas.add(current)
+                    elif 'art' in leave_name:
+                        art += 9.0
+                    else:
+                        otras_lic += 9.0
+    
+                    current += timedelta(days=1)
+    
+            # --- PRESENTISMO ---
+            q1_sin_just = any(
+                date(year, month, d) in sin_just_fechas
+                for d in range(1, min(16, num_days + 1))
+            )
+    
+            q2_sin_just = any(
+                date(year, month, d) in sin_just_fechas
+                for d in range(16, num_days + 1)
+            ) if num_days >= 16 else False
+    
+            if not q1_sin_just and not q2_sin_just:
+                present_quincena = 1.0
+            elif not q1_sin_just or not q2_sin_just:
+                present_quincena = 0.5
+            else:
+                present_quincena = 0.0
+    
+            total_horas = horas_trabajadas + lic_enf + otras_lic + vacac + sin_just + art
+    
+            Line.create({
+                'report_id': self.id,
+                'sector': sector,
+                'employee_id': emp.id,
+                'horas_trabajadas': horas_trabajadas,
+                'lic_enf': lic_enf,
+                'otras_lic': otras_lic,
+                'vacac': vacac,
+                'sin_just': sin_just,
+                'horas_rec': horas_rec,
+                'present_quincena': present_quincena,
+                'art': art,
+                'total': total_horas,
+            })
+            self.last_generated_year = self.year
+            self.last_generated_month = self.month
+            self.needs_refresh = False
 
     def generate_attendance_report_excel(self):
         self.ensure_one()
@@ -44,6 +305,7 @@ class InfoWizard(models.TransientModel):
         end_date = date(year, month, num_days)
         company_calendar = self.env.company.resource_calendar_id
         feriados = set()
+        _logger.info(self.env['resource.calendar.leaves'].search([]))
         if company_calendar:
             start_dt = fields.Datetime.to_datetime(start_date)
             end_dt = fields.Datetime.to_datetime(end_date) + timedelta(days=1)
@@ -102,17 +364,21 @@ class InfoWizard(models.TransientModel):
             'Otras Lic',
             'Vacac',
             'SIN JUST.',
+            'Horas recuperadas',
             'Present Quincena',
             'ILT',
             'Total',
         ]
-    
+        feriados_ordenados = sorted(feriados)
+        feriados_texto = ", ".join(d.strftime("%d/%m/%Y") for d in feriados_ordenados)
         # Escribir cabeceras
+        worksheet.write(0, 0, "Feriados del mes:")
+        worksheet.write(0, 1, feriados_texto)
         for col, header in enumerate(headers):
-            worksheet.write(0, col, header, header_format)
+            worksheet.write(2, col, header, header_format)
     
         # Escribir datos por empleado
-        row_index = 1
+        row_index = 3
         for emp in employees:
             sector = emp.department_id.name or "SIN DEPARTAMENTO"
             last_name = emp.name or "Sin nombre"
@@ -125,6 +391,7 @@ class InfoWizard(models.TransientModel):
             art = 0.0
             vacac = 0.0
             sin_just = 0.0
+            horas_rec = 0.0
             _logger.info(f"Procesando: {emp.name}")
             # --- 1. Obtener todas las asistencias del mes (optimizado) ---
             attendances = self.env['hr.attendance'].search([
@@ -239,6 +506,16 @@ class InfoWizard(models.TransientModel):
                 _logger.info(f"Feriado: {feriados}")
                 while current <= to_date:
                     _logger.info(current)
+                    leave_name = (leave.holiday_status_id.name or '').lower()
+                    if 'recuperadas' or 'recuperar' in leave_name:
+                        # usar horas reales del permiso
+                        if leave.request_unit_hours:
+                            horas_rec += leave.number_of_hours or 0.0
+                        else:
+                            # fallback si viene en días
+                            horas_rec += (leave.number_of_days or 0.0) * 9.0
+                        current += timedelta(days=1)
+                        continue
                     if current.weekday() >= 5:  # sábado o domingo
                         current += timedelta(days=1)
                         continue
@@ -303,6 +580,7 @@ class InfoWizard(models.TransientModel):
                 otras_lic,          # Otras Lic
                 vacac,              # Vacac
                 sin_just,           # SIN JUST.
+                horas_rec,          #Horas recuperadas
                 present_quincena,   # Present Quincena
                 art,
                 total_horas
@@ -337,3 +615,23 @@ class InfoWizard(models.TransientModel):
             'url': f'/web/content/{attachment.id}?download=true',
             'target': 'self',
         }
+
+
+class InfoWizardLine(models.TransientModel):
+    _name = 'hr.attendance.custom_report.line'
+    _description = 'Línea reporte asistencias'
+
+    report_id = fields.Many2one('hr.attendance.custom_report', ondelete='cascade')
+
+    sector = fields.Char(string="Sector")
+    employee_id = fields.Many2one('hr.employee', string="Empleado")
+
+    horas_trabajadas = fields.Float(string="Jornada Recibo")
+    lic_enf = fields.Float(string="Lic x Enf")
+    otras_lic = fields.Float(string="Otras Lic")
+    vacac = fields.Float(string="Vacaciones")
+    sin_just = fields.Float(string="Sin Justificar")
+    horas_rec = fields.Float(string="Horas recuperadas")
+    present_quincena = fields.Float(string="Present Quincena")
+    art = fields.Float(string="ILT")
+    total = fields.Float(string="Total")
