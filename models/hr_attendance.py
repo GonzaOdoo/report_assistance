@@ -42,23 +42,14 @@ class HrAttendance(models.Model):
                 attendance.scheduled_check_in = False
                 #attendance.scheduled_check_out = False
                 continue
-    
+                
             # Obtener contrato vigente en la fecha de check_in
-            contract = self.env['hr.contract'].search([
-                ('employee_id', '=', attendance.employee_id.id),
-                ('state', '=', 'open'),
-                ('date_start', '<=', attendance.check_in.date()),
-                '|',
-                ('date_end', '=', False),
-                ('date_end', '>=', attendance.check_in.date())
-            ], limit=1)
-    
-            if not contract or not contract.resource_calendar_id:
+            if not attendance.employee_id.resource_calendar_id:
                 attendance.scheduled_check_in = False
                 #attendance.scheduled_check_out = False
                 continue
     
-            calendar = contract.resource_calendar_id
+            calendar = attendance.employee_id.resource_calendar_id
             employee = attendance.employee_id
             # ✅ Usar zona horaria de Paraguay por defecto si no está definida
             local_tz = timezone(employee.tz or 'America/Asuncion')
@@ -75,7 +66,7 @@ class HrAttendance(models.Model):
                 day_end.astimezone(UTC),
                 lunch=False
             )
-            normal_intervals = contract.resource_calendar_id._attendance_intervals_batch(
+            normal_intervals = employee.resource_calendar_id._attendance_intervals_batch(
                 day_start.astimezone(UTC),
                 day_end.astimezone(UTC),
                 employee.resource_id
