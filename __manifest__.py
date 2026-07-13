@@ -20,7 +20,7 @@
     'version': '1.0',
 
     # any module necessary for this one to work correctly
-    'depends': ['hr_attendance','hr_payroll'],
+    'depends': ['hr_attendance','hr_payroll','mrp','sale_mrp',],
 
     # always loaded
     "data": ["security/ir.model.access.csv",
