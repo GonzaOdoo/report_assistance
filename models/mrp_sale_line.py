@@ -13,8 +13,9 @@ class MrpProduction(models.Model):
     line_description = fields.Text(string="Descripción linea de venta",related="source_sale_line_id.name",store=True)
 
     sale_order_names = fields.Char(
-        string="Sale Orders",
+        string="Venta(Origen)",
         compute="_compute_sale_order_names",
+        store=True,
     )
 
     @api.depends(
@@ -45,8 +46,9 @@ class StockPicking(models.Model):
     _inherit = "stock.picking"
 
     sale_order_names = fields.Char(
-        string="Sale Orders",
+        string="Venta(Origen)",
         compute="_compute_sale_order_names",
+        store=True,
     )
 
     @api.depends("origin")
